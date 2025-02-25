@@ -144,7 +144,8 @@ def main():
     
     try:
         # Convert date string to Time object if provided, otherwise use current time
-        time = Time(args.date) if args.date else Time.now(scale='utc')
+        time = Time(args.date) if args.date else Time.now()
+        time = time.utc
         # Get the plan
         table = get_plan_oneday(time, line=args.line, 
                               body_name=args.body, sun_avoid=args.sun)
