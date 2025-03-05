@@ -13,6 +13,7 @@ from astropy.time import Time
 import os
 import signal
 import sys
+import errno
 
 from planner import get_plan_oneday  # Import directly from paste module
 
@@ -27,7 +28,7 @@ logging.basicConfig(
 )
 
 # Lock file directory - using existing directory
-LOCK_DIR = './'
+LOCK_DIR = '/home/gb/obstool/daq_auto/lock'
 
 # Global variable to store the lock file path
 CURRENT_LOCK_FILE = None
@@ -70,11 +71,19 @@ def check_lock(target_name):
                     print(f"\nERROR: Target '{target_name}' is already being monitored.")
                     print(f"Lock held by user {username} (PID {pid}) since {timestamp}")
                     return True
-                except OSError:
-                    # Process doesn't exist, lock is stale
-                    print(f"Removing stale lock for '{target_name}' (PID {pid} no longer exists)")
-                    os.remove(lock_file_path)
-                    return False
+                except OSError as e:
+                    if e.errno == errno.ESRCH:
+                        # Process doesn't exist, lock is stale
+                        print(f"Removing stale lock for '{target_name}' (PID {pid} no longer exists)")
+                        os.remove(lock_file_path)
+                        return False
+                    else:
+                        # Other OSError (like permission denied), assume lock is valid
+                        print(f"\nERROR: Target '{target_name}' is already being monitored.")
+                        print(f"Lock held by user {username} (PID {pid}) since {timestamp}")
+                        print(f"Cannot verify process status: {e}")
+                        return True
+
         except Exception as e:
             # Error reading lock file, assume it's invalid and remove it
             print(f"Invalid lock file for '{target_name}', removing: {e}")
@@ -113,6 +122,8 @@ def create_lock(target_name):
         with open(lock_file_path, 'w') as f:
             f.write(f"{pid},{username},{timestamp}")
         
+        os.chmod(lock_file_path, 0o666)
+
         CURRENT_LOCK_FILE = lock_file_path
         print(f"Lock acquired for target '{target_name}'")
         return lock_file_path
