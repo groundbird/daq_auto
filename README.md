@@ -129,8 +129,21 @@ The scheduler creates a log file `reset_scheduler.log` in the current directory,
 2025-02-24 19:00:00,000 - INFO - Starting 24-hour reset scheduler for moon
 2025-02-24 19:00:00,100 - INFO - Elevation angle: 70°
 2025-02-24 19:00:00,200 - INFO - Sun avoidance angle: 60°
-2025-02-24 19:30:00,000 - INFO - Executing reset command: /home/gb/obstool/daq_client.py GB01...
+2025-02-24 19:30:00,000 - INFO - Executing reset command: /home
+/gb/obstool/daq_client.py GB01...
 ```
+
+
+### Concurrent Usage Limitations
+
+- Only one scheduler can monitor a specific celestial target at a time
+- Attempting to start a scheduler for an already monitored target will display an error:
+  ```
+  ERROR: Target 'jupiter' is already being monitored.
+  Lock held by user gb (PID 1793089) since 2025-03-05T16:47:32.297299
+  ```
+- Different users can monitor different targets simultaneously (e.g., one user for Jupiter, another for Moon)
+- Use `--list` option to check which targets are currently being monitored before starting a new scheduler
 
 ## Notes
 

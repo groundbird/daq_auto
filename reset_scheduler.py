@@ -287,15 +287,20 @@ async def run_scheduler(target_name='moon', elevation=70, sun_avoid=60, delay_mi
 
 def list_active_targets():
     """
-    List all currently active targets with their lock information
+    List all lock files regardless of process status
+    This version works across different user accounts
     """
-    active_targets = []
+    lock_files = []
+    
+    if not os.path.exists(LOCK_DIR):
+        print(f"\nLock directory {LOCK_DIR} does not exist.")
+        return
+    
     for filename in os.listdir(LOCK_DIR):
         if filename.endswith('.lock') and not filename.startswith('.'):
             target_name = filename[:-5]  # Remove .lock extension
             lock_file_path = os.path.join(LOCK_DIR, filename)
             
-            # Check if lock is valid (process still running)
             try:
                 with open(lock_file_path, 'r') as f:
                     lock_data = f.read().strip().split(',')
@@ -305,30 +310,30 @@ def list_active_targets():
                     username = lock_data[1]
                     timestamp = lock_data[2]
                     
-                    # Check if process is still running
+                    # Try to check if process exists, but don't rely on it
+                    process_status = "Unknown"
                     try:
-                        os.kill(pid, 0)  # Check if process exists
-                        active_targets.append((target_name, pid, username, timestamp))
+                        os.kill(pid, 0)
+                        process_status = "Running"
                     except OSError:
-                        # Process doesn't exist, lock is stale
-                        os.remove(lock_file_path)
-            except:
-                # Invalid lock file, remove it
-                try:
-                    os.remove(lock_file_path)
-                except:
-                    pass
+                        # Can't determine status due to permissions or process not existing
+                        pass
+                    
+                    lock_files.append((target_name, pid, username, timestamp, process_status))
+            except Exception as e:
+                print(f"Invalid lock file for '{target_name}': {e}")
     
-    if active_targets:
-        print("\n=== Currently Active Observation Targets ===")
-        for target, pid, username, timestamp in active_targets:
+    if lock_files:
+        print("\n=== Observatory Lock Files ===")
+        for target, pid, username, timestamp, status in lock_files:
             print(f"Target: {target}")
-            print(f"  - Monitored by: {username}")
+            print(f"  - Owner: {username}")
             print(f"  - Process ID: {pid}")
-            print(f"  - Started: {timestamp}")
+            print(f"  - Created: {timestamp}")
+            print(f"  - Status: {status}")
             print("---")
     else:
-        print("\nNo active observation targets found.")
+        print("\nNo lock files found.")
 
 def main():
     # Set up signal handlers for proper cleanup
