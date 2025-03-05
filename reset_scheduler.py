@@ -10,6 +10,9 @@ import logging
 from argparse import ArgumentParser
 import pandas as pd
 from astropy.time import Time
+import os
+import signal
+import sys
 
 from planner import get_plan_oneday  # Import directly from paste module
 
@@ -22,6 +25,113 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+# Lock file directory - using existing directory
+LOCK_DIR = './'
+
+# Global variable to store the lock file path
+CURRENT_LOCK_FILE = None
+
+def signal_handler(sig, frame):
+    """Handle Ctrl+C and other termination signals"""
+    if CURRENT_LOCK_FILE and os.path.exists(CURRENT_LOCK_FILE):
+        try:
+            os.remove(CURRENT_LOCK_FILE)
+            print(f"\nLock file removed: {CURRENT_LOCK_FILE}")
+        except Exception as e:
+            print(f"\nError removing lock file: {e}")
+    
+    print("\nScheduler terminated by user.")
+    sys.exit(0)
+
+def check_lock(target_name):
+    """
+    Check if a lock exists for the given target
+    Returns True if locked, False otherwise
+    """
+    lock_file_path = os.path.join(LOCK_DIR, f"{target_name}.lock")
+    
+    # If lock file exists, check if it's stale
+    if os.path.exists(lock_file_path):
+        try:
+            with open(lock_file_path, 'r') as f:
+                lock_data = f.read().strip().split(',')
+                
+            if len(lock_data) >= 3:
+                pid = int(lock_data[0])
+                username = lock_data[1]
+                timestamp = lock_data[2]
+                
+                # Check if process is still running
+                try:
+                    # Sending signal 0 checks if process exists without actually sending a signal
+                    os.kill(pid, 0)
+                    # Process exists, lock is valid
+                    print(f"\nERROR: Target '{target_name}' is already being monitored.")
+                    print(f"Lock held by user {username} (PID {pid}) since {timestamp}")
+                    return True
+                except OSError:
+                    # Process doesn't exist, lock is stale
+                    print(f"Removing stale lock for '{target_name}' (PID {pid} no longer exists)")
+                    os.remove(lock_file_path)
+                    return False
+        except Exception as e:
+            # Error reading lock file, assume it's invalid and remove it
+            print(f"Invalid lock file for '{target_name}', removing: {e}")
+            try:
+                os.remove(lock_file_path)
+            except:
+                pass
+            return False
+    
+    return False
+
+def create_lock(target_name):
+    """
+    Create a lock file for the given target
+    Returns the lock file path if successful, None if failed
+    """
+    global CURRENT_LOCK_FILE
+    
+    # Check if lock already exists
+    if check_lock(target_name):
+        return None
+    
+    lock_file_path = os.path.join(LOCK_DIR, f"{target_name}.lock")
+    
+    try:
+        # Create lock file with PID, username, and timestamp
+        pid = os.getpid()
+        try:
+            username = os.getlogin()
+        except:
+            username = f"pid-{pid}"
+        
+        timestamp = datetime.now().isoformat()
+        
+        # Write lock info as CSV-like format for easy parsing
+        with open(lock_file_path, 'w') as f:
+            f.write(f"{pid},{username},{timestamp}")
+        
+        CURRENT_LOCK_FILE = lock_file_path
+        print(f"Lock acquired for target '{target_name}'")
+        return lock_file_path
+    
+    except Exception as e:
+        print(f"Error creating lock file: {e}")
+        return None
+
+def remove_lock(lock_file_path):
+    """Remove the lock file"""
+    global CURRENT_LOCK_FILE
+    
+    if lock_file_path and os.path.exists(lock_file_path):
+        try:
+            os.remove(lock_file_path)
+            CURRENT_LOCK_FILE = None
+            logging.info(f"Lock removed: {lock_file_path}")
+        except Exception as e:
+            logging.error(f"Error removing lock file: {e}")
 
 def create_reset_command(gb_number, target_name):
     """Common function to generate reset command"""
@@ -68,7 +178,7 @@ def display_schedule_and_confirm(schedule, target_name):
     
     if not reset_commands:
         print("No reset commands scheduled for execution within 24 hours.")
-        return False
+        return False, []
         
     while True:
         response = input("\nDo you want to start execution with this schedule? (Y/N): ").strip().upper()
@@ -100,7 +210,6 @@ def execute_reset_command(cmd, gb_number, delay_minutes=20):
     logging.info(f"Executing reset command: {cmd}")
     try:
         subprocess.run(cmd.split(), check=True)
-        # logging.info("Reset command executed successfully")
         print("Reset command executed successfully")
         # Execute sky command asynchronously
         asyncio.create_task(execute_delayed_sky_command(gb_number, delay_minutes))
@@ -113,6 +222,12 @@ async def run_scheduler(target_name='moon', elevation=70, sun_avoid=60, delay_mi
     """
     Execute schedule for 24 hours
     """
+    # Create lock for the target
+    lock_file_path = create_lock(target_name)
+    if not lock_file_path:
+        print("\nCannot proceed with scheduling. Please choose a different target or wait.")
+        sys.exit(1)
+    
     try:
         # Get schedule
         logging.info(f"Getting 24-hour schedule for {target_name}")
@@ -136,7 +251,6 @@ async def run_scheduler(target_name='moon', elevation=70, sun_avoid=60, delay_mi
             # Sleep until execution time
             sleep_seconds = (event_time - datetime.now(timezone.utc)).total_seconds()
             if sleep_seconds > 0:
-                # logging.info(f"Waiting {sleep_seconds:.1f} seconds until next event")
                 print(f"Waiting {sleep_seconds:.1f} seconds until next event")
                 await asyncio.sleep(sleep_seconds)
 
@@ -156,8 +270,61 @@ async def run_scheduler(target_name='moon', elevation=70, sun_avoid=60, delay_mi
     except Exception as e:
         logging.error(f"Error in scheduler: {e}")
         print(f"\nAn error occurred: {e}")
+    finally:
+        # Always remove the lock when done
+        remove_lock(lock_file_path)
+
+def list_active_targets():
+    """
+    List all currently active targets with their lock information
+    """
+    active_targets = []
+    for filename in os.listdir(LOCK_DIR):
+        if filename.endswith('.lock') and not filename.startswith('.'):
+            target_name = filename[:-5]  # Remove .lock extension
+            lock_file_path = os.path.join(LOCK_DIR, filename)
+            
+            # Check if lock is valid (process still running)
+            try:
+                with open(lock_file_path, 'r') as f:
+                    lock_data = f.read().strip().split(',')
+                
+                if len(lock_data) >= 3:
+                    pid = int(lock_data[0])
+                    username = lock_data[1]
+                    timestamp = lock_data[2]
+                    
+                    # Check if process is still running
+                    try:
+                        os.kill(pid, 0)  # Check if process exists
+                        active_targets.append((target_name, pid, username, timestamp))
+                    except OSError:
+                        # Process doesn't exist, lock is stale
+                        os.remove(lock_file_path)
+            except:
+                # Invalid lock file, remove it
+                try:
+                    os.remove(lock_file_path)
+                except:
+                    pass
+    
+    if active_targets:
+        print("\n=== Currently Active Observation Targets ===")
+        for target, pid, username, timestamp in active_targets:
+            print(f"Target: {target}")
+            print(f"  - Monitored by: {username}")
+            print(f"  - Process ID: {pid}")
+            print(f"  - Started: {timestamp}")
+            print("---")
+    else:
+        print("\nNo active observation targets found.")
 
 def main():
+    # Set up signal handlers for proper cleanup
+    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # kill command
+    signal.signal(signal.SIGHUP, signal_handler) 
+    
     parser = ArgumentParser(description='Schedule reset commands for 24-hour astronomical observations')
     parser.add_argument('--target', default='moon',
                        help='Target celestial body (default: moon)')
@@ -165,8 +332,15 @@ def main():
                        help='Elevation angle for observations (default: 70)')
     parser.add_argument('--sun-avoid', type=float, default=60,
                        help='Sun avoidance angle (default: 60)')
+    parser.add_argument('--list', action='store_true',
+                       help='List currently active observation targets')
     
     args = parser.parse_args()
+    
+    # List active targets if requested
+    if args.list:
+        list_active_targets()
+        return
     
     logging.info(f"Starting 24-hour reset scheduler for {args.target}")
     logging.info(f"Elevation angle: {args.elevation}°")
