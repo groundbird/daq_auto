@@ -1,0 +1,3 @@
+[submodule "logger_base"]
+	path = logger_base
+	url = git@github.com:groundbird/logger_base.git
