@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# priority.yaml  —  GroundBIRD DAQ Continuous Scheduler Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Priority rule:
+#   If a higher-priority target is currently above its observation line,
+#   any lower-priority target's reset commands are skipped for that slot.
+#   Example: moon(1) > jupiter(2)  →  while moon is up, jupiter is skipped.
+#
+# Priority numbers: 1 = highest.  Ties are broken by list order.
+# ─────────────────────────────────────────────────────────────────────────────
+
+targets:
+  - name: moon
+    priority: 2        # highest priority
+    elevation: 70      # telescope elevation line (degrees)
+
+  - name: jupiter
+    priority: 1
+    elevation: 70
+
+  # ── Add more targets below ────────────────────────────────────────────────
+  # - name: saturn
+  #   priority: 3
+  #   elevation: 65
+  #
+  # - name: venus
+  #   priority: 4
+  #   elevation: 70
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Schedule email report settings
+# ─────────────────────────────────────────────────────────────────────────────
+report:
+  # Day(s) of the week to send the report email.
+  # List one or more values: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
+  # Examples:
+  #   Every Friday        → [4]
+  #   Monday and Friday   → [0, 4]
+  #   Every day           → [0, 1, 2, 3, 4, 5, 6]
+  weekdays: [0, 1, 2, 3, 4, 5, 6]
+
+  # Time (UTC) to send the report on the chosen weekday(s).
+  # Format: "HH:MM"  (24-hour clock, UTC)
+  time_utc: "08:00"
+
+  # Number of days ahead to include in each report.
+  # Set this to match how often you send:
+  #   Weekly report  → 7  (covers the coming week)
+  #   Daily report   → 1  (covers only tomorrow)
+  report_days_ahead: 7
+
+  # List of email addresses to receive the report.
+  # Add or remove addresses as needed.
+  to_addr:
+    # - gb@iac.es
+    - miku.tsujii.p4@dc.tohoku.ac.jp
