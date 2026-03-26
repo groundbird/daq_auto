@@ -1,5 +1,7 @@
 # Observation Planning Tools
 
+> **Note:** It is recommended to run all scripts under the `gb` account.
+
 This repository contains Python scripts for planning and executing astronomical observations with GroundBIRD.
 
 | Script | Role |
