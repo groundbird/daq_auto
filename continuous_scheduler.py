@@ -25,7 +25,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("continuous_scheduler.log"),
+        logging.FileHandler("./tmp/continuous_scheduler.log"),
         logging.StreamHandler(),
     ],
 )
@@ -276,7 +276,7 @@ async def _delayed_sky(gb_number: str):
     m           = re.search(r'targetname:"([^":]+):([^"]+)"', resp)
     shifter     = m.group(2).strip() if m else "none"
     targt_value = f"sky:{shifter}" if shifter else "sky"
-    
+
     resp = _daq_ctrl(gb_number, "targt", targt_value)
     if resp:
         logging.info(f"[SKY] GB{gb_number} → targetname set to {targt_value!r}")
@@ -378,10 +378,14 @@ async def run_one_day(target_configs: list[dict]):
     print("  Today's Schedule")
     print("=" * 60)
     for ev in events:
+        if ev["gb_number"] is None:
+            continue
         print(f"  {ev['time'].strftime('%Y-%m-%d %H:%M UTC')}  [{ev['target']:10s}]  {ev['action']}")
     print("=" * 60 + "\n")
 
     for ev in events:
+        if ev["gb_number"] is None:
+            continue
         evt_time: datetime = ev["time"]
 
         if evt_time < now_utc:
@@ -394,11 +398,11 @@ async def run_one_day(target_configs: list[dict]):
             logging.info(f"Waiting {sleep_secs:.0f}s → [{ev['target']}] {ev['action']}")
             await asyncio.sleep(sleep_secs)
 
-        if ev["gb_number"] is not None:
-            if is_blocked(ev["gb_number"], ev["target"], target_configs):
-                continue
-            execute_reset(ev["gb_number"], ev["target"])
-            await asyncio.sleep(STAGGER_SECONDS)
+        if is_blocked(ev["gb_number"], ev["target"], target_configs):
+            continue
+            
+        execute_reset(ev["gb_number"], ev["target"])
+        await asyncio.sleep(STAGGER_SECONDS)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
