@@ -2,12 +2,13 @@
 """
 mailer.py — Schedule email report for GroundBIRD continuous scheduler
 
-Uses logger_base.mail_sender directly (same as the existing mailsender.py),
+Uses logger_base.mail_sender directly
 but without the telescope status or interactive confirmation.
 """
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -17,6 +18,7 @@ from logger_base.mail_sender import make_message, send_via_gmail
 from planner import get_plan_oneday
 
 FROM_ADDR = "gbird.auto@gmail.com"
+server_name = os.uname().nodename
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -73,6 +75,7 @@ def build_report_body(target_configs: list[dict], days_ahead: int) -> str:
         "Here is the GroundBIRD automated observation schedule.",
         "",
         f"  Period : {now.strftime('%Y-%m-%d %H:%M UTC')}  →  {end.strftime('%Y-%m-%d %H:%M UTC')}",
+        f"  Server : {server_name}",
         "",
     ]
 
@@ -119,7 +122,7 @@ def build_report_body(target_configs: list[dict], days_ahead: int) -> str:
 
     lines += [
         "─" * 55,
-        "This message was generated automatically by continuous_scheduler.py.",
+        "This message was generated automatically by obstool/daq_auto/continuous_scheduler.py.",
     ]
     return "\n".join(lines)
 
