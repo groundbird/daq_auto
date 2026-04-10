@@ -286,8 +286,14 @@ async def _delayed_sky(gb_number: str):
         return
     # ── Preserve the current shifter ─────────────────────────────────────────
     m           = re.search(r'targetname:"([^":]+):([^"]+)"', resp)
-    shifter     = m.group(2).strip() if m else "none"
-    targt_value = f"sky:{shifter}" if shifter else "sky"
+    if m is None:
+        logging.warning(
+            f"[SKY] GB{gb_number} could not parse targetname from status response "
+            f"({resp!r}) — sky command skipped"
+       )
+        return
+    shifter     = m.group(2).strip()
+    targt_value = f"sky:{shifter}"
 
     resp = _daq_ctrl(gb_number, "targt", targt_value)
     if resp:
@@ -296,10 +302,11 @@ async def _delayed_sky(gb_number: str):
         logging.error(f"[SKY] GB{gb_number} → targetname command failed")
 
 
-def execute_reset(gb_number: str, target_name: str):
+def execute_reset(gb_number: str, target_name: str, target_configs: list[dict], interruptible: set[str]):
     """
     Set the target name (preserving the current shifter) and reset the DAQ,
-    but *only* when the DAQ is already running.
+    but *only* when the DAQ is already running and the current target is listed in interruptible_targets (e.g. 'sky').
+    Targets not in that set (wire, psd, dome, etc.) are protected from interruption.
     """
     resp = _daq_ctrl(gb_number, "statu")
 
@@ -310,8 +317,26 @@ def execute_reset(gb_number: str, target_name: str):
     logging.debug(f"[STATUS] GB{gb_number}: {resp!r}")
 
     m = re.search(r'targetname:"([^":]+):([^"]+)"', resp)
-    shifter     = m.group(2).strip() if m else "none"
-    targt_value = f"{target_name}:{shifter}" if shifter else target_name
+
+    if m is None:
+        logging.warning(
+            f"[SKIP] GB{gb_number} could not parse targetname from status response "
+            f"({resp!r}) — reset for '{target_name}' skipped"
+        )
+        return
+
+
+    current_target = m.group(1).strip()
+    shifter        = m.group(2).strip()
+    targt_value = f"{target_name}:{shifter}"
+
+    # ── Guard: only interrupt if current target is interruptible or managed by scheduler ──
+    priority_map = {t["name"]: t["priority"] for t in target_configs}
+    if current_target not in interruptible and current_target not in priority_map:
+        logging.info(
+            f"[SKIP] GB{gb_number} currently running '{current_target}' "
+        )
+        return
 
     logging.info(f"[RESET] GB{gb_number} → setting targetname to {targt_value!r}, then reset")
 
@@ -319,8 +344,7 @@ def execute_reset(gb_number: str, target_name: str):
 
     result = _daq_ctrl(gb_number, "reset")
 
-
-    if "failed" in result.lower():
+    if not result or "failed" in result.lower():
         logging.error(f"[RESET] GB{gb_number} reset failed: {result!r}")
         return
 
@@ -381,7 +405,7 @@ def _build_events(target_configs: list[dict]) -> list[dict]:
     return events
 
 
-async def run_one_day(target_configs: list[dict]):
+async def run_one_day(target_configs: list[dict], interruptible: set[str]):
     events  = _build_events(target_configs)
     now_utc = datetime.now(timezone.utc)
     day_end = now_utc + timedelta(hours=24)
@@ -413,7 +437,7 @@ async def run_one_day(target_configs: list[dict]):
         if is_blocked(ev["gb_number"], ev["target"], target_configs):
             continue
 
-        execute_reset(ev["gb_number"], ev["target"])
+        execute_reset(ev["gb_number"], ev["target"], target_configs, interruptible)
         await asyncio.sleep(STAGGER_SECONDS)
 
 
@@ -421,18 +445,18 @@ async def run_one_day(target_configs: list[dict]):
 # Main loop
 # ═════════════════════════════════════════════════════════════════════════════
 
-async def run_continuous(target_configs: list[dict], report_cfg: dict | None):
+async def run_continuous(target_configs: list[dict], report_cfg: dict | None, interruptible: set[str]):
     lock_files = [create_lock(tcfg["name"]) for tcfg in target_configs]
 
     if report_cfg is not None:
-        asyncio.create_task(email_report_loop(report_cfg, target_configs))
+        _email_task = asyncio.create_task(email_report_loop(report_cfg, target_configs))
 
     try:
         day = 0
         while True:
             day += 1
             logging.info(f"{'='*20} Day {day} {'='*20}")
-            await run_one_day(target_configs)
+            await run_one_day(target_configs, interruptible)
             logging.info(f"Day {day} complete — replanning.")
             await asyncio.sleep(60)
     finally:
@@ -454,9 +478,10 @@ def main():
     if args.list:
         list_active_targets()
         return
-        
+
     if os.path.exists(SCHEDULER_LOCK_FILE):
-        pid = int(open(SCHEDULER_LOCK_FILE).read().strip())
+        with open(SCHEDULER_LOCK_FILE) as f:
+            pid = int(f.read().strip())
         try:
             os.kill(pid, 0)
             print(f"already running (PID={pid})")
@@ -485,7 +510,10 @@ def main():
         f"{t['name']}({t['priority']})" for t in target_configs
     ))
 
-    asyncio.run(run_continuous(target_configs, report_cfg))
+
+    interruptible  = set(cfg.get("scheduler", {}).get("interruptible_targets", ["sky"]))
+    logging.info("Interruptible targets: " + ", ".join(sorted(interruptible)))
+    asyncio.run(run_continuous(target_configs, report_cfg, interruptible))
 
 
 if __name__ == "__main__":

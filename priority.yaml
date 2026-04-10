@@ -5,18 +5,18 @@
 # Priority rule:
 #   If a higher-priority target is currently above its observation line,
 #   any lower-priority target's reset commands are skipped for that slot.
-#   Example: moon(1) > jupiter(2)  →  while moon is up, jupiter is skipped.
+# Example: moon(1) > jupiter(2)  →  while moon is up, jupiter is skipped.
 #
 # Priority numbers: 1 = highest.  Ties are broken by list order.
 # ─────────────────────────────────────────────────────────────────────────────
 
 targets:
   - name: moon
-    priority: 2        # highest priority
+    priority: 2
     elevation: 70      # telescope elevation line (degrees)
 
   - name: jupiter
-    priority: 1
+    priority: 1        # highest priority
     elevation: 70
 
   # ── Add more targets below ────────────────────────────────────────────────
@@ -28,6 +28,11 @@ targets:
   #   priority: 4
   #   elevation: 70
 
+scheduler:
+  # Current targets for which the scheduler may execute a reset
+  # Targets not listed here (such as wire and psd) will not be interrupted
+  interruptible_targets:
+    - sky
 # ─────────────────────────────────────────────────────────────────────────────
 # Schedule email report settings
 # ─────────────────────────────────────────────────────────────────────────────
