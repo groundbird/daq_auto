@@ -42,31 +42,24 @@ Priority numbers: **1 = highest**.  While a higher-priority target is above its 
 ### 2. Start in a screen session
 
 ```bash
-# Create (or reattach to) a screen session
-screen -R auto
-
-# Run the scheduler
-./continuous_scheduler.py
-
-# Detach (keep running in background): Ctrl+A, then D
-
-# Reattach later
-screen -r auto
+crontab -e
 ```
+Add the following line:
 
 Custom config file:
-```bash
-./continuous_scheduler.py --config my_config.yaml
+```crontab
+0 * * * * /home/gb/obstool/daq_auto/continuous_scheduler.py
 ```
 
-Check which targets are currently being observed:
+This runs every hour. If the scheduler is already running, it exits immediately (checked via `.continuous_scheduler.lock`).
+
+### 3. Check running status
+
 ```bash
 ./continuous_scheduler.py --list
 ```
 
-Stop the scheduler: reattach to the screen session and press `Ctrl+C`, or send SIGTERM/SIGHUP.
-
-### 3. Log file
+### 4. Log file
 
 Logs are written to `./tmp/continuous_scheduler.log`.
 

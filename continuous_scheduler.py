@@ -12,6 +12,7 @@ import signal
 import sys
 from argparse import ArgumentParser
 from datetime import datetime, timedelta, timezone
+from os.path import dirname, abspath, join
 
 import pandas as pd
 import yaml
@@ -21,17 +22,19 @@ from planner import get_plan_oneday
 from mailer import email_report_loop
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+_SCRIPT_DIR = dirname(abspath(__file__))
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("./tmp/continuous_scheduler.log"),
+        logging.FileHandler(join(_SCRIPT_DIR, "tmp", "continuous_scheduler.log")),
         logging.StreamHandler(),
     ],
 )
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 LOCK_DIR              = "/home/gb/obstool/daq_auto/lock"
+SCHEDULER_LOCK_FILE   = join(_SCRIPT_DIR, ".continuous_scheduler.lock")
 DAQ_CLIENT_PATH       = "/home/gb/obstool/daq_client.py"
 SKY_DELAY_MINUTES     = 20
 STAGGER_SECONDS       = 30
@@ -54,6 +57,7 @@ def _cleanup_and_exit(sig, frame):
     for lf in _ACTIVE_LOCK_FILES:
         if os.path.exists(lf):
             os.remove(lf)
+    _remove_scheduler_lock()
     logging.info("Scheduler terminated.")
     sys.exit(0)
 
@@ -201,6 +205,14 @@ def list_active_targets():
     else:
         print("No active observation locks found.")
 
+
+def _write_scheduler_lock():
+    with open(SCHEDULER_LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def _remove_scheduler_lock():
+    if os.path.exists(SCHEDULER_LOCK_FILE):
+        os.remove(SCHEDULER_LOCK_FILE)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Priority check
@@ -400,7 +412,7 @@ async def run_one_day(target_configs: list[dict]):
 
         if is_blocked(ev["gb_number"], ev["target"], target_configs):
             continue
-            
+
         execute_reset(ev["gb_number"], ev["target"])
         await asyncio.sleep(STAGGER_SECONDS)
 
@@ -426,6 +438,7 @@ async def run_continuous(target_configs: list[dict], report_cfg: dict | None):
     finally:
         for lf in lock_files:
             remove_lock(lf)
+        _remove_scheduler_lock()
 
 
 def main():
@@ -434,13 +447,24 @@ def main():
     signal.signal(signal.SIGHUP,  _cleanup_and_exit)
 
     parser = ArgumentParser(description="GroundBIRD continuous multi-target scheduler")
-    parser.add_argument("--config", default="priority.yaml", help="Path to config YAML")
+    parser.add_argument("--config", default=join(_SCRIPT_DIR, "priority.yaml"), help="Path to config YAML")
     parser.add_argument("--list",   action="store_true",     help="List active locks and exit")
     args = parser.parse_args()
 
     if args.list:
         list_active_targets()
         return
+        
+    if os.path.exists(SCHEDULER_LOCK_FILE):
+        pid = int(open(SCHEDULER_LOCK_FILE).read().strip())
+        try:
+            os.kill(pid, 0)
+            print(f"already running (PID={pid})")
+            sys.exit(0)
+        except OSError:
+            pass
+
+    _write_scheduler_lock()
 
     if not os.path.exists(args.config):
         print(f"ERROR: Config file not found: {args.config}")
